@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Toyoko Inn multi-area vacancy monitor."""
+"""Toyoko Inn multi-area vacancy monitor with built-in scheduler."""
 
 from __future__ import annotations
 
@@ -19,7 +19,6 @@ from typing import Any
 
 API_URL = "https://www.toyoko-inn.com/api/trpc/public.areas.byId,hotels.availabilities.prices"
 
-# Browser-like headers for Toyoko API requests.
 BROWSER_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -49,9 +48,13 @@ class Config:
     min_request_interval_seconds: float
     request_jitter_seconds: float
     area_loop_delay_seconds: float
+    schedule_interval_seconds: int
+    schedule_jitter_seconds: int
+    run_once: bool
     telegram_bot_token: str
     telegram_chat_id: str
-    line_notify_token: str
+    line_bot_channel_access_token: str
+    line_bot_to: str
 
 
 class RequestPacer:
@@ -61,11 +64,10 @@ class RequestPacer:
         self.last_request_ts: float | None = None
 
     def pace(self) -> None:
-        now = time.time()
         jitter = random.uniform(0.0, self.jitter)
         target_interval = self.min_interval + jitter
         if self.last_request_ts is not None:
-            elapsed = now - self.last_request_ts
+            elapsed = time.time() - self.last_request_ts
             wait_s = target_interval - elapsed
             if wait_s > 0:
                 time.sleep(wait_s)
@@ -99,9 +101,8 @@ def parse_area_ids() -> list[int]:
     ids: list[int] = []
     for item in raw.split(","):
         token = item.strip()
-        if not token:
-            continue
-        ids.append(int(token))
+        if token:
+            ids.append(int(token))
 
     unique_sorted = sorted(set(ids))
     if not unique_sorted:
@@ -147,9 +148,13 @@ def load_config() -> Config:
         min_request_interval_seconds=float(os.getenv("MIN_REQUEST_INTERVAL_SECONDS", "1.5")),
         request_jitter_seconds=float(os.getenv("REQUEST_JITTER_SECONDS", "1.2")),
         area_loop_delay_seconds=float(os.getenv("AREA_LOOP_DELAY_SECONDS", "2.0")),
+        schedule_interval_seconds=int(os.getenv("SCHEDULE_INTERVAL_SECONDS", "900")),
+        schedule_jitter_seconds=int(os.getenv("SCHEDULE_JITTER_SECONDS", "30")),
+        run_once=os.getenv("RUN_ONCE", "false").lower() == "true",
         telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", "").strip(),
         telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID", "").strip(),
-        line_notify_token=os.getenv("LINE_NOTIFY_TOKEN", "").strip(),
+        line_bot_channel_access_token=os.getenv("LINE_BOT_CHANNEL_ACCESS_TOKEN", "").strip(),
+        line_bot_to=os.getenv("LINE_BOT_TO", "").strip(),
     )
 
 
@@ -313,17 +318,20 @@ def notify_telegram(cfg: Config, message: str) -> None:
     post_json(url, {"chat_id": cfg.telegram_chat_id, "text": message})
 
 
-def notify_line_notify(cfg: Config, message: str) -> None:
-    if not cfg.line_notify_token:
+def notify_line_bot(cfg: Config, message: str) -> None:
+    if not (cfg.line_bot_channel_access_token and cfg.line_bot_to):
         return
 
-    body = urllib.parse.urlencode({"message": message}).encode("utf-8")
+    payload = {
+        "to": cfg.line_bot_to,
+        "messages": [{"type": "text", "text": message}],
+    }
     req = urllib.request.Request(
-        "https://notify-api.line.me/api/notify",
-        data=body,
+        "https://api.line.me/v2/bot/message/push",
+        data=json.dumps(payload, separators=(",", ":")).encode("utf-8"),
         headers={
-            "Authorization": f"Bearer {cfg.line_notify_token}",
-            "Content-Type": "application/x-www-form-urlencoded",
+            "Authorization": f"Bearer {cfg.line_bot_channel_access_token}",
+            "Content-Type": "application/json",
             "User-Agent": BROWSER_HEADERS["User-Agent"],
         },
         method="POST",
@@ -390,7 +398,7 @@ def process_area(cfg: Config, area_id: int, state: dict[str, Any], pacer: Reques
     if should_notify:
         message = build_message(cfg, area_id, len(target_codes), available_codes, name_map)
         notify_telegram(cfg, message)
-        notify_line_notify(cfg, message)
+        notify_line_bot(cfg, message)
         notify_result = "Notification sent."
     else:
         notify_result = "No notification sent."
@@ -411,24 +419,43 @@ def process_area(cfg: Config, area_id: int, state: dict[str, Any], pacer: Reques
     }
 
 
+def run_single_cycle(cfg: Config, state: dict[str, Any]) -> None:
+    pacer = RequestPacer(cfg.min_request_interval_seconds, cfg.request_jitter_seconds)
+    for i, area_id in enumerate(cfg.area_ids):
+        result = process_area(cfg, area_id, state, pacer)
+        print(
+            f"Area {result['area_id']}: total={result['area_hotels']}, "
+            f"checked={result['checked_hotels']}, available={result['available_hotels']}"
+        )
+        print(result["notify_result"])
+
+        if i < len(cfg.area_ids) - 1 and cfg.area_loop_delay_seconds > 0:
+            time.sleep(cfg.area_loop_delay_seconds)
+
+
+def sleep_until_next_cycle(cfg: Config) -> None:
+    jitter = random.randint(0, max(0, cfg.schedule_jitter_seconds))
+    wait_seconds = max(1, cfg.schedule_interval_seconds + jitter)
+    print(f"Next cycle in {wait_seconds} seconds...")
+    time.sleep(wait_seconds)
+
+
 def main() -> int:
     try:
         cfg = load_config()
         state = load_state(cfg.state_file)
-        pacer = RequestPacer(cfg.min_request_interval_seconds, cfg.request_jitter_seconds)
 
-        for i, area_id in enumerate(cfg.area_ids):
-            result = process_area(cfg, area_id, state, pacer)
-            print(
-                f"Area {result['area_id']}: total={result['area_hotels']}, "
-                f"checked={result['checked_hotels']}, available={result['available_hotels']}"
-            )
-            print(result["notify_result"])
+        while True:
+            print(f"=== Cycle start: {datetime.now(timezone.utc).isoformat()} ===")
+            run_single_cycle(cfg, state)
+            save_state(cfg.state_file, state)
 
-            if i < len(cfg.area_ids) - 1 and cfg.area_loop_delay_seconds > 0:
-                time.sleep(cfg.area_loop_delay_seconds)
+            if cfg.run_once:
+                print("RUN_ONCE=true, exiting after one cycle.")
+                break
 
-        save_state(cfg.state_file, state)
+            sleep_until_next_cycle(cfg)
+
         return 0
     except (ValueError, urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
