@@ -482,19 +482,21 @@ def load_state(path: Path) -> dict[str, Any]:
 
 
 def save_state(path: Path, state: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _state_key(cfg: Config, target_value: str, target_codes: list[str]) -> str:
+def _state_key(cfg: Config, target_kind: str, target_value: str) -> str:
     raw = json.dumps(
         {
+            "target_kind": target_kind,
             "target": target_value,
-            "hotel_codes": sorted(target_codes),
             "checkin": cfg.checkin_date,
             "checkout": cfg.checkout_date,
             "people": cfg.number_of_people,
             "rooms": cfg.number_of_room,
             "smoking": cfg.smoking_type,
+            "preferred_hotel_codes": sorted(cfg.preferred_hotel_codes),
         },
         sort_keys=True,
     )
@@ -661,7 +663,7 @@ def process_target(
         raise
 
     # ── Diff & notify ───────────────────────────────────────────────────
-    key = _state_key(cfg, target.value, target_codes)
+    key = _state_key(cfg, target.kind, target.value)
     prev_hash = state.get(key, {}).get("availability_hash")
     current_hash = hashlib.sha256(json.dumps(available_codes).encode()).hexdigest()
     first_run = prev_hash is None
