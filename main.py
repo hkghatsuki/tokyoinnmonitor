@@ -669,8 +669,12 @@ def process_target(
     first_run = prev_hash is None
     changed = prev_hash != current_hash
 
-    should_notify = (available_codes and cfg.notify_when_available_always) or (
-        changed and (cfg.notify_on_first_run or not first_run)
+    # Deduplication: only fire when the available-hotel set has actually changed.
+    # notify_when_available_always=True  → notify on any change that yields rooms
+    #                                      (suppresses "no rooms" change alerts)
+    # notify_when_available_always=False → notify on every change (rooms or none)
+    should_notify = changed and (cfg.notify_on_first_run or not first_run) and (
+        bool(available_codes) or not cfg.notify_when_available_always
     )
 
     if should_notify:
