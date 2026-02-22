@@ -1,6 +1,14 @@
 ﻿# tokyoinnmonitor
 
-監控東橫 Inn 空房：支援依**地區 ID**或**都道府縣代碼**搜尋，可同時監控多個目標，只要有空房即通知。
+監控東橫 Inn 空房：支援依**地區 ID**或**都道府縣代碼**搜尋，可同時監控多個目標，只要有空房即通知，並列出可訂房型與剩餘房間數。
+
+## 運作流程
+
+每個搜尋目標依序執行三步驟：
+
+1. **取得飯店列表**（`_next/data` search endpoint）→ 收集 `hotelCode` / `hotelName`
+2. **查詢空房狀態**（tRPC `hotels.availabilities.prices`）→ 判斷是否有空房
+3. **取得房型詳情**（`_next/data` room_plan endpoint，僅對有空房的飯店執行）→ 列出可訂房型、剩餘間數及吸煙／禁煙
 
 ## 功能
 
@@ -8,7 +16,7 @@
   - **地區 ID**：`AREA_IDS=473,475,...`
   - **都道府縣代碼**：`PREFECTURES=13-all,...`（例如 `13-all` = 東京都全部）
 - 自動讀取每個搜尋目標下所有飯店並查空房
-- 日期填寫以 **GMT+8（香港／台灣／日本）** 當天 00:00 為基準，自動換算 UTC
+- 日期填寫以 **GMT+8（香港／台灣）** 當天 00:00 為基準，自動換算 UTC
 - 內建排程常駐執行（不需另設 crontab）
 - 通知模式：
   - `NOTIFY_WHEN_AVAILABLE_ALWAYS=true`：只要有空房，每次循環都通知
@@ -84,5 +92,5 @@ python3 main.py
 
 ## 注意
 
-- `SEARCH_URL` 含有 Next.js build hash（`_next/data/<hash>/...`），網站重新部署後此值會變，需手動更新 `main.py` 中的 `SEARCH_URL`。
+- `SEARCH_URL` 與 `ROOM_PLAN_URL` 均含有 Next.js build hash（`_next/data/<hash>/...`），網站重新部署後此值會變，需手動同步更新 `main.py` 中的兩個常數。
 - 目標網站 API 若調整欄位結構，解析規則可能需微調。
