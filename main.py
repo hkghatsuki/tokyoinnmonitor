@@ -38,9 +38,7 @@ from typing import Any
 #       site deployment.  Update it when requests start returning 404.
 # ---------------------------------------------------------------------------
 SEARCH_URL = "https://www.toyoko-inn.com/_next/data/Q26kEC5gXEbF5My2xy3e5/china/search/result.json"
-AVAILABILITY_URL = (
-    "https://www.toyoko-inn.com/api/trpc/hotels.availabilities.prices"
-)
+AVAILABILITY_URL = "https://www.toyoko-inn.com/api/trpc/hotels.availabilities.prices"
 ROOM_PLAN_URL = "https://www.toyoko-inn.com/_next/data/Q26kEC5gXEbF5My2xy3e5/china/search/result/room_plan.json"
 
 BROWSER_HEADERS: dict[str, str] = {
@@ -104,8 +102,8 @@ class SearchTarget:
 # ---------------------------------------------------------------------------
 @dataclass
 class Config:
-    area_ids: list[int]          # may be empty when only PREFECTURES is used
-    prefecture_ids: list[str]    # may be empty when only AREA_IDS is used
+    area_ids: list[int]  # may be empty when only PREFECTURES is used
+    prefecture_ids: list[str]  # may be empty when only AREA_IDS is used
     checkin_date: str  # ISO-8601 UTC, e.g. "2026-03-18T16:00:00.000Z"
     checkout_date: str
     number_of_people: int
@@ -245,8 +243,7 @@ def load_config() -> Config:
         smoking_type=os.getenv("SMOKING_TYPE", "all").strip() or "all",
         preferred_hotel_codes=preferred,
         state_file=Path(os.getenv("STATE_FILE", ".toyoko_state.json")),
-        notify_on_first_run=os.getenv(
-            "NOTIFY_ON_FIRST_RUN", "false").lower() == "true",
+        notify_on_first_run=os.getenv("NOTIFY_ON_FIRST_RUN", "false").lower() == "true",
         notify_when_available_always=os.getenv(
             "NOTIFY_WHEN_AVAILABLE_ALWAYS", "true"
         ).lower()
@@ -254,14 +251,10 @@ def load_config() -> Config:
         min_request_interval_seconds=float(
             os.getenv("MIN_REQUEST_INTERVAL_SECONDS", "1.5")
         ),
-        request_jitter_seconds=float(
-            os.getenv("REQUEST_JITTER_SECONDS", "1.2")),
-        area_loop_delay_seconds=float(
-            os.getenv("AREA_LOOP_DELAY_SECONDS", "2.0")),
-        schedule_interval_seconds=int(
-            os.getenv("SCHEDULE_INTERVAL_SECONDS", "900")),
-        schedule_jitter_seconds=int(
-            os.getenv("SCHEDULE_JITTER_SECONDS", "30")),
+        request_jitter_seconds=float(os.getenv("REQUEST_JITTER_SECONDS", "1.2")),
+        area_loop_delay_seconds=float(os.getenv("AREA_LOOP_DELAY_SECONDS", "2.0")),
+        schedule_interval_seconds=int(os.getenv("SCHEDULE_INTERVAL_SECONDS", "900")),
+        schedule_jitter_seconds=int(os.getenv("SCHEDULE_JITTER_SECONDS", "30")),
         run_once=os.getenv("RUN_ONCE", "false").lower() == "true",
         telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", "").strip(),
         telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID", "").strip(),
@@ -334,25 +327,19 @@ def fetch_hotels(
     For prefecture targets the display label stays as the prefecture code
     because the response gives no distinct area metadata.
     """
-    checkin_dt = datetime.fromisoformat(
-        cfg.checkin_date.replace("Z", "+00:00"))
-    checkout_dt = datetime.fromisoformat(
-        cfg.checkout_date.replace("Z", "+00:00"))
-
     params: dict[str, str] = {
         **target.search_param,
         "people": str(cfg.number_of_people),
         "room": str(cfg.number_of_room),
         "smoking": cfg.smoking_type,
-        "start": checkin_dt.strftime("%Y-%m-%d"),
-        "end": checkout_dt.strftime("%Y-%m-%d"),
+        "start": _utc_iso_to_local_date(cfg.checkin_date),
+        "end": _utc_iso_to_local_date(cfg.checkout_date),
     }
     data = _get_json(SEARCH_URL, params, BROWSER_HEADERS, pacer)
 
     name_map: dict[str, str] = {}
     # Response shape: result.pageProps.searchResponse.hotels
-    page_props = (data.get("pageProps") or {}
-                  ) if isinstance(data, dict) else {}
+    page_props = (data.get("pageProps") or {}) if isinstance(data, dict) else {}
     search_response = page_props.get("searchResponse") or {}
 
     # Derive display label — only meaningful for area targets
@@ -385,9 +372,7 @@ def fetch_hotels(
 # ---------------------------------------------------------------------------
 # Step 2 — fetch availability / prices via tRPC
 # ---------------------------------------------------------------------------
-def fetch_availability(
-    hotel_codes: list[str], cfg: Config, pacer: RequestPacer
-) -> Any:
+def fetch_availability(hotel_codes: list[str], cfg: Config, pacer: RequestPacer) -> Any:
     """Return the prices dict keyed by hotelCode from the tRPC batch response.
 
     Response shape (batch index 1):
@@ -411,9 +396,9 @@ def fetch_availability(
         "input": json.dumps(trpc_input, separators=(",", ":")),
     }
 
-    print(params)
+    # print(params)
     resp = _get_json(AVAILABILITY_URL, params, BROWSER_HEADERS, pacer)
-    print(resp)
+    # print(resp)
     # Batch response is a list; prices are in slot 1
     node = resp[0] if isinstance(resp, list) and len(resp) > 0 else {}
     payload = (
@@ -428,9 +413,7 @@ def fetch_availability(
 # ---------------------------------------------------------------------------
 # Step 3 — fetch available room plans for a specific hotel
 # ---------------------------------------------------------------------------
-def fetch_room_plans(
-    hotel_code: str, cfg: Config, pacer: RequestPacer
-) -> list[str]:
+def fetch_room_plans(hotel_code: str, cfg: Config, pacer: RequestPacer) -> list[str]:
     """Return a list of roomTypeName strings that have vacancies.
 
     A room type is considered available when:
@@ -439,31 +422,24 @@ def fetch_room_plans(
 
     Returns an empty list when no plans are available or on parse error.
     """
-    checkin_dt = datetime.fromisoformat(
-        cfg.checkin_date.replace("Z", "+00:00"))
-    checkout_dt = datetime.fromisoformat(
-        cfg.checkout_date.replace("Z", "+00:00"))
-
     params: dict[str, str] = {
         "hotel": hotel_code,
-        "start": checkin_dt.strftime("%Y-%m-%d"),
-        "end": checkout_dt.strftime("%Y-%m-%d"),
+        "start": _utc_iso_to_local_date(cfg.checkin_date),
+        "end": _utc_iso_to_local_date(cfg.checkout_date),
         "room": str(cfg.number_of_room),
         "people": str(cfg.number_of_people),
         "smoking": cfg.smoking_type,
         "tab": "roomType",
         "sort": "recommend",
     }
-
+    print(params)
     try:
         data = _get_json(ROOM_PLAN_URL, params, BROWSER_HEADERS, pacer)
     except Exception as exc:
-        log.warning("fetch_room_plans failed for hotel %s: %s",
-                    hotel_code, exc)
+        log.warning("fetch_room_plans failed for hotel %s: %s", hotel_code, exc)
         return []
 
-    page_props = (data.get("pageProps") or {}
-                  ) if isinstance(data, dict) else {}
+    page_props = (data.get("pageProps") or {}) if isinstance(data, dict) else {}
     room_plan_response = page_props.get("planResponse") or {}
     plan_list = room_plan_response.get("planList") or []
 
@@ -490,15 +466,14 @@ def fetch_room_plans(
             general_vacant = vacant.get("generalVacantRoom") or 0
             membership_vacant = vacant.get("membershipVacantRoom") or 0
             if general_vacant > 0 or membership_vacant > 0:
-                name = str(room.get("roomTypeName")
-                           or room.get("name") or "").strip()
+                name = str(room.get("roomTypeName") or room.get("name") or "").strip()
                 name = name or "未知房型"
                 name = name + "(吸煙" if is_smoking else name + "(禁煙"
                 if general_vacant > 0:
                     name += f", {general_vacant}間)"
                 elif membership_vacant > 0:
                     name += f", {membership_vacant}間)"
-                
+
                 if name and name not in seen:
                     seen.add(name)
                     available_room_types.append(name)
@@ -553,7 +528,9 @@ def parse_available(prices: Any, target_codes: list[str]) -> list[str]:
         entry = prices.get(code)
         if not isinstance(entry, dict):
             continue
-        if entry.get("existEnoughVacantRooms") is True and not entry.get("isUnderMaintenance", False):
+        if entry.get("existEnoughVacantRooms") is True and not entry.get(
+            "isUnderMaintenance", False
+        ):
             available.append(code)
     return available
 
@@ -573,8 +550,7 @@ def load_state(path: Path) -> dict[str, Any]:
 
 def save_state(path: Path, state: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(state, ensure_ascii=False,
-                    indent=2), encoding="utf-8")
+    path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _state_key(cfg: Config, target_kind: str, target_value: str) -> str:
@@ -695,7 +671,7 @@ def _send_line(cfg: Config, message: str) -> None:
 
 def notify(cfg: Config, message: str) -> None:
     """Dispatch *message* to every configured notification channel."""
-    # _send_telegram(cfg, message)
+    _send_telegram(cfg, message)
     _send_line(cfg, message)
 
 
@@ -722,8 +698,7 @@ def process_target(
         name_map, display_label = fetch_hotels(target, cfg, pacer)
         area_codes = sorted(name_map.keys())
         if not area_codes:
-            raise ValueError(
-                f"No hotels returned for {target.kind}={target.value}")
+            raise ValueError(f"No hotels returned for {target.kind}={target.value}")
 
         target_codes = (
             sorted(set(cfg.preferred_hotel_codes) & set(area_codes))
@@ -787,8 +762,7 @@ def process_target(
     prev_hash = prev_state.get("availability_hash")
     prev_room_plans_hash = prev_state.get("room_plans_hash")
 
-    current_hash = hashlib.sha256(json.dumps(
-        available_codes).encode()).hexdigest()
+    current_hash = hashlib.sha256(json.dumps(available_codes).encode()).hexdigest()
     # Sort room plan lists so order differences don't trigger spurious alerts
     room_plans_sorted = {c: sorted(ps) for c, ps in room_plans.items()}
     current_room_plans_hash = hashlib.sha256(
@@ -807,14 +781,15 @@ def process_target(
     # notify_when_available_always=True  → notify on any change that yields rooms
     #                                      (suppresses "no rooms" change alerts)
     # notify_when_available_always=False → notify on every change (rooms or none)
-    should_notify = changed and (cfg.notify_on_first_run or not first_run) and (
-        bool(available_codes) or not cfg.notify_when_available_always
+    should_notify = (
+        changed
+        and (cfg.notify_on_first_run or not first_run)
+        and (bool(available_codes) or not cfg.notify_when_available_always)
     )
 
     if should_notify:
         msg = _build_availability_message(
-            cfg, display_label, len(
-                target_codes), available_codes, name_map, room_plans
+            cfg, display_label, len(target_codes), available_codes, name_map, room_plans
         )
         notify(cfg, msg)
         notify_result = "notified"
@@ -847,14 +822,11 @@ def process_target(
 # Scheduler / main loop
 # ---------------------------------------------------------------------------
 def run_cycle(cfg: Config, state: dict[str, Any]) -> None:
-    pacer = RequestPacer(cfg.min_request_interval_seconds,
-                         cfg.request_jitter_seconds)
+    pacer = RequestPacer(cfg.min_request_interval_seconds, cfg.request_jitter_seconds)
 
     targets: list[SearchTarget] = [
         SearchTarget(kind="area", value=str(aid)) for aid in cfg.area_ids
-    ] + [
-        SearchTarget(kind="prefecture", value=pref) for pref in cfg.prefecture_ids
-    ]
+    ] + [SearchTarget(kind="prefecture", value=pref) for pref in cfg.prefecture_ids]
 
     for i, target in enumerate(targets):
         try:
@@ -899,8 +871,7 @@ def main() -> int:
     state = load_state(cfg.state_file)
 
     while True:
-        log.info("=== Cycle start %s ===",
-                 datetime.now(timezone.utc).isoformat())
+        log.info("=== Cycle start %s ===", datetime.now(timezone.utc).isoformat())
         run_cycle(cfg, state)
         save_state(cfg.state_file, state)
 
