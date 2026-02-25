@@ -22,6 +22,7 @@ import json
 import logging
 import os
 import random
+import re
 import sys
 import time
 import urllib.error
@@ -37,9 +38,19 @@ from typing import Any
 # NOTE: SEARCH_URL contains a Next.js build hash that changes on each
 #       site deployment.  Update it when requests start returning 404.
 # ---------------------------------------------------------------------------
-SEARCH_URL = "https://www.toyoko-inn.com/_next/data/kxn4TZFlfQc3a1YVmNsQY/china/search/result.json"
+
+next_hash = "d41d8cd98f00b204e9800998ecf8427e"  # dummy hash; refreshed automatically on 404
+
+SEARCH_URL = f"https://www.toyoko-inn.com/_next/data/{next_hash}/china/search/result.json"
 AVAILABILITY_URL = "https://www.toyoko-inn.com/api/trpc/hotels.availabilities.prices"
-ROOM_PLAN_URL = "https://www.toyoko-inn.com/_next/data/kxn4TZFlfQc3a1YVmNsQY/china/search/result/room_plan.json"
+ROOM_PLAN_URL = f"https://www.toyoko-inn.com/_next/data/{next_hash}/china/search/result/room_plan.json"
+
+# Matches the _next/data segment in a URL so the hash can be swapped after refresh.
+_NEXT_DATA_URL_RE = re.compile(r"(/_next/data/)([^/]+)(/)")
+# Matches the _buildManifest.js <script> tag in the homepage HTML.
+_BUILD_MANIFEST_RE = re.compile(
+    r'<script[^>]+/_next/static/([A-Za-z0-9_-]+)/_buildManifest\.js[^>]*>'
+)
 
 BROWSER_HEADERS: dict[str, str] = {
     "User-Agent": (
@@ -266,6 +277,47 @@ def load_config() -> Config:
 
 
 # ---------------------------------------------------------------------------
+# Next.js build-hash refresh
+# ---------------------------------------------------------------------------
+def _fetch_next_hash() -> str:
+    """Fetch https://www.toyoko-inn.com/china/ and extract the Next.js build hash
+    from the _buildManifest.js <script> tag.
+    """
+    homepage = "https://www.toyoko-inn.com/china/"
+    log.info("Fetching homepage to discover current build hash: %s", homepage)
+    req = urllib.request.Request(homepage, headers=BROWSER_HEADERS, method="GET")
+    with urllib.request.urlopen(req, timeout=45) as resp:  # nosec B310
+        html = resp.read().decode("utf-8")
+    m = _BUILD_MANIFEST_RE.search(html)
+    if not m:
+        raise ValueError(
+            "Could not find _buildManifest.js script tag in Toyoko Inn china homepage."
+        )
+    return m.group(1)
+
+
+def refresh_next_hash() -> str:
+    """Re-scrape the china homepage, update the global next_hash and the two
+    _next/data URL constants, and return the new hash.
+    """
+    global next_hash, SEARCH_URL, ROOM_PLAN_URL  # noqa: PLW0603
+    new_hash = _fetch_next_hash()
+    if new_hash == next_hash:
+        log.debug("next_hash unchanged: %s", new_hash)
+        return new_hash
+    log.info("next_hash refreshed: %s → %s", next_hash, new_hash)
+    next_hash = new_hash
+    SEARCH_URL = (
+        f"https://www.toyoko-inn.com/_next/data/{next_hash}/china/search/result.json"
+    )
+    ROOM_PLAN_URL = (
+        f"https://www.toyoko-inn.com/_next/data/{next_hash}"
+        f"/china/search/result/room_plan.json"
+    )
+    return new_hash
+
+
+# ---------------------------------------------------------------------------
 # HTTP helpers
 # ---------------------------------------------------------------------------
 class RequestPacer:
@@ -290,14 +342,30 @@ def _get_json(
     params: dict[str, str],
     headers: dict[str, str],
     pacer: RequestPacer | None = None,
+    _retry_on_404: bool = True,
 ) -> Any:
     if pacer:
         pacer.pace()
     full_url = f"{url}?{urllib.parse.urlencode(params)}"
     log.debug("GET %s", full_url)
     req = urllib.request.Request(full_url, headers=headers, method="GET")
-    with urllib.request.urlopen(req, timeout=45) as resp:  # nosec B310
-        return json.loads(resp.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req, timeout=45) as resp:  # nosec B310
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404 and _retry_on_404 and _NEXT_DATA_URL_RE.search(url):
+            log.warning(
+                "HTTP 404 on _next/data URL — refreshing build hash and retrying. url=%s",
+                url,
+            )
+            new_hash = refresh_next_hash()
+            # Replace the stale hash segment in the URL that was passed in.
+            new_url = _NEXT_DATA_URL_RE.sub(
+                lambda m: f"{m.group(1)}{new_hash}{m.group(3)}", url
+            )
+            log.info("Retrying with updated URL: %s", new_url)
+            return _get_json(new_url, params, headers, pacer, _retry_on_404=False)
+        raise
 
 
 def _http_post(

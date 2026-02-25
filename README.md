@@ -84,6 +84,21 @@ python3 main.py
   - 啟用去重模式，只有空房結果改變才通知。
 - 任一搜尋目標查詢失敗時，會傳送錯誤通知，並繼續處理其餘目標。
 
+## Next.js Build Hash 自動更新
+
+`SEARCH_URL` 與 `ROOM_PLAN_URL` 均含有 Next.js build hash（`/_next/data/<hash>/...`）。東橫 Inn 網站每次重新部署後此 hash 會變更，導致請求回傳 HTTP 404。
+
+程式已內建自動更新機制，無需人工介入：
+
+1. 當任一 `_next/data` URL 回傳 HTTP **404** 時，程式自動發出以下流程：
+   - GET `https://www.toyoko-inn.com/china/`，解析 HTML 中的：
+     ```html
+     <script src="/_next/static/<new_hash>/_buildManifest.js" defer=""></script>
+     ```
+   - 提取新 hash，更新程式內部的 `SEARCH_URL`、`ROOM_PLAN_URL` 全域變數。
+   - 以新 URL **重試**原本的請求（每次 404 只重試一次，避免迴圈）。
+2. 若 hash 未變則略過更新，hash 有變則記錄 `next_hash refreshed: <old> → <new>`。
+
 ## 防 bot 注意事項
 
 - 每次 API 請求前會套用最小間隔 + 隨機抖動。
@@ -92,5 +107,5 @@ python3 main.py
 
 ## 注意
 
-- `SEARCH_URL` 與 `ROOM_PLAN_URL` 均含有 Next.js build hash（`_next/data/<hash>/...`），網站重新部署後此值會變，需手動同步更新 `main.py` 中的兩個常數。
+- 若東橫 Inn 網站 HTML 結構改變，導致 `_buildManifest.js` 的 `<script>` 標籤格式有所調整，自動 hash 更新可能失效，此時需檢查 `_BUILD_MANIFEST_RE` 正則式。
 - 目標網站 API 若調整欄位結構，解析規則可能需微調。
