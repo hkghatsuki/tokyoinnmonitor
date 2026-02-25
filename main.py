@@ -37,9 +37,9 @@ from typing import Any
 # NOTE: SEARCH_URL contains a Next.js build hash that changes on each
 #       site deployment.  Update it when requests start returning 404.
 # ---------------------------------------------------------------------------
-SEARCH_URL = "https://www.toyoko-inn.com/_next/data/Q26kEC5gXEbF5My2xy3e5/china/search/result.json"
+SEARCH_URL = "https://www.toyoko-inn.com/_next/data/kxn4TZFlfQc3a1YVmNsQY/china/search/result.json"
 AVAILABILITY_URL = "https://www.toyoko-inn.com/api/trpc/hotels.availabilities.prices"
-ROOM_PLAN_URL = "https://www.toyoko-inn.com/_next/data/Q26kEC5gXEbF5My2xy3e5/china/search/result/room_plan.json"
+ROOM_PLAN_URL = "https://www.toyoko-inn.com/_next/data/kxn4TZFlfQc3a1YVmNsQY/china/search/result/room_plan.json"
 
 BROWSER_HEADERS: dict[str, str] = {
     "User-Agent": (
